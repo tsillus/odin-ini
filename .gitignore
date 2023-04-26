@@ -1,0 +1,6 @@
+*.exe
+*.pdb
+*.ods
+/.vscode
+
+ols.json

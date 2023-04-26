@@ -1,4 +1,4 @@
-package ini
+package test
 
 import "core:mem"
 import "core:fmt"
@@ -6,6 +6,8 @@ import "core:testing"
 import "core:strings"
 import str "core:strconv"
 import path "core:path/filepath"
+
+import ini ".."
 
 
 First :: struct {
@@ -30,6 +32,7 @@ Configuration :: struct {
 @(test)
 test_read_ini_simple :: proc(tester: ^testing.T) {
 
+    using ini
 	ini_file_name, _ := path.abs("./test/test.ini")
 
 	cfg, err := read_ini_file(ini_file_name)
@@ -53,8 +56,9 @@ test_read_ini_simple :: proc(tester: ^testing.T) {
 
 }
 
-parse_func :: proc(section: Section) -> (Second, Error) {
-	second := Second{}
+parse_func :: proc(section: ini.Section) -> (Second, ini.Error) {
+    using ini
+    second := Second{}
 
 	second.path = section.options["path"] or_else "."
 	second.file_name = section.options["file_name"] or_else ""
@@ -66,7 +70,7 @@ parse_func :: proc(section: Section) -> (Second, Error) {
 
 @(test)
 test_read_ini_with_parser :: proc(tester: ^testing.T) {
-
+    using ini
 	parser := Parser(Second) {
 		section_name = "second Section",
 		parse        = parse_func,
@@ -87,6 +91,8 @@ import r "core:reflect"
 
 @(test)
 test_assign_to_integer :: proc(tester: ^testing.T) {
+
+    using ini
 	int8: i8
 	uint8: u8
 
@@ -104,6 +110,7 @@ test_assign_to_integer :: proc(tester: ^testing.T) {
 @(test)
 test_memory_safety :: proc(tester: ^testing.T) {
     
+    using ini
     tracker: mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracker, context.allocator)
     defer mem.tracking_allocator_destroy(&tracker)
