@@ -1,10 +1,10 @@
 
-/** 
-# odini
+
+# odin-ini
 
 A simple package used to load data from an .ini file into your own data structures.
 
-## Basic Usage
+## Usage
 
 1. Create your configuration data structures. E.g:
 
@@ -34,31 +34,59 @@ Configuration :: struct {
 ```odin
 import ini "shared:ini"
 
-load_ini :: proc(file_name: string) -> (cfg: Configuration, success:bool) {
 
-    cfg_ini, err := ini.read_ini_file(file_name)
-    if err != .OK {
-        // ...
+load_ini :: proc(file_name: string) -> (config: Configuration, success:bool) {
+
+    cfg, err := ini.read_ini_file(file_name)
+    defer ini.delete_config(cfg)
+    if err != nil {
+        return config, false
     }
 
-    cfg = Configuration{
-         // you can create instances for each field here to provide default values.
+    config = Configuration{
+        logging = ini.parse_section_by_type(cfg, "logging", Logging)   or_else Logging{},
+        database  = ini.parse_section_by_type(cfg, "server", Database) or_else Database{},
     }
-    db_err, log_err : ini.Error
-    cfg.database, db_err = ini.parse_section(cfg_ini, "database", &(cfg.database))
-    cfg.logging, log_err = ini.parse_section(cfg_ini, "logging", &(cfg.logging))
-
-    if db_err != .OK { /* ... */}
-    if log_err != .OK { /* ... */}
-
-    return cfg, true
+    
+    return config, true
 }
 ```
-3. Eternal happiness!
 
+2b. You can also define default values before parsing the file:
 
-## Advanced Usage
+```odin
 
-Sometimes the basic data types aren't enough. You might want to translate certain settings into enums or arrays. 
+load_ini_with_defaults :: proc(file_name: string) -> (config: Configuration, success: bool) {
 
+    config = IniConfiguration{
+        logging = Logging{
+            level = "INFO",
+            path = ".",
+        }
+        database = Database{}
+    }
+
+    cfg, err := ini.read_ini_file(file_name)
+    defer ini.delete_config(cfg)
+    if err != nil {
+        // this would still provide a config your program
+        // might be able to work with.
+        return config, false
+    }
+
+    ini.parse_section(cfg, "logging", &(config.logging))
+    ini.parse_section(cfg, "database", &(config.database))
+
+    return config, true
+}
+```
+
+3. call your procedure
+
+```odin
+
+cfg, ok := load_ini("./config.ini")
+```
+
+4. Eternal happiness!
 

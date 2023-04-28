@@ -1,10 +1,6 @@
 package ini
 
-
-// TODO:(tsi) [X] section names case insensitive
-// TODO:(tsi) [X] section fields case insensitive
-// TODO:(tsi) [X] parse yes/no/y/n to bool as well
-// TODO:(tsi) [ ] fix memory leaks
+VERSION :: "0.1.0"
 
 import "core:strings"
 import str "core:strconv"
@@ -12,6 +8,7 @@ import os "core:os"
 import io "core:io"
 import "core:log"
 import "core:mem"
+import virtual "core:mem/virtual"
 import fmt "core:fmt"
 import r "core:reflect"
 import runtime "core:runtime"
@@ -20,16 +17,12 @@ import runtime "core:runtime"
 Config :: struct {
 	sections: map[string]Section,
 	buffer:   []byte,
+    text: string,
 }
 
 Section :: struct {
 	title:   string,
 	options: map[string]string,
-}
-
-Parser :: struct($T: typeid) {
-	section_name: string,
-	parse:        proc(section: Section) -> (T, Error),
 }
 
 Error :: enum {
@@ -40,55 +33,60 @@ Error :: enum {
 	Section_Not_Found,
 }
 
+
 delete_config :: proc(cfg: Config) {
-    
-    delete_map(cfg.sections)
-    delete_slice(cfg.buffer)
+    for name, section in cfg.sections {
+        for key, option in section.options {
+            delete(key)
+        }
+        delete(section.options)
+        delete(section.title)
+    }
+    delete(cfg.sections)
+    delete(cfg.buffer)
+    delete(cfg.text)
 
 }
 
-ini_arena: mem.Arena
 
-
-read_ini_file :: proc(filename: string) -> (cfg: Config, err: Error) {
-    
-	mem.arena_init(&ini_arena, make([]u8, os.file_size_from_path(filename)*32))
-	context.allocator = mem.arena_allocator(&ini_arena)
-
+read_ini_file :: proc(filename: string, allocator := context.allocator) -> (cfg: Config, err: Error) {
+    context.allocator = allocator
     err = .OK
 	ok: bool
 	cfg.buffer, ok = os.read_entire_file_from_filename(filename)
 	cfg.sections = make_map(map[string]Section, 4)
 
 	if !ok {
-		fmt.eprintln("Could not read file", filename, ": ")
+		fmt.eprintln("Could not read file", filename, ".")
+        return cfg, .File_Not_Found
 	}
 
-	str_data := strings.clone_from_bytes(cfg.buffer)
-    defer delete_string(str_data)
-	str_lines := strings.split_lines(str_data)
-
+	cfg.text = strings.clone_from_bytes(cfg.buffer)
+    //defer delete_string(str_data)
+	str_lines := strings.split_lines(cfg.text)
+    defer delete_slice(str_lines)
 
 	section: Section
 	for line in str_lines {
 		if len(line) == 0 {continue}
 		if line[0] == ';' {continue}
 		if line[0] == '[' {
-			if section.title != "" {
-				cfg.sections[section.title] = section
-				section = Section{}
-			}
-            
-            t := strings.to_lower(line)
-            t = strings.trim(t, "[]")
+            if section.title != "" {
 
-			section = Section {
-				title   = t,
-				options = make_map(map[string]string),
-			}
-			continue
+                cfg.sections[section.title] = section
+                section = Section{}
+            }
+
+            t := strings.trim(line, "[]")
+            t = strings.to_lower(t)
+
+            section = Section {
+                title   = t,
+                options = make_map(map[string]string),
+            }
+            continue
 		}
-		if strings.contains_rune(line, '=') != -1 {
+		if strings.contains_rune(line, '=') { // != -1 {
 			key, _, value := strings.partition(line, "=")
 			key = strings.trim_space(key)
             key = strings.to_lower(key)
@@ -98,53 +96,41 @@ read_ini_file :: proc(filename: string) -> (cfg: Config, err: Error) {
 			continue
 		}
 
-		fmt.eprintln("Skipped a line: ", line, "\n...")
+//		fmt.eprintln("Skipped a line: ", line, "\n...")
 	}
 
 	if section.title != "" {
 		cfg.sections[section.title] = section
 	}
 
-	return
+	return cfg, .OK
 }
-
-
-parse_bool :: proc(data: string) -> (result:bool, ok:bool) {
-
-    switch data {
-        case "y", "Y", "yes", "Yes", "YES":
-            return true, true
-        case "n", "N", "no", "No", "NO":
-            return false, true
-        case:
-            return str.parse_bool(data)
-    }
-
-}
-
 
 parse_section :: proc {
 	parse_section_by_type,
-	parse_section_by_parser,
     parse_section_by_instance,
 }
 
 
-parse_section_by_instance :: proc(cfg: Config, section_name_: string, section_struct_ptr: ^$T) -> (section_struct: T, err: Error) {
-    context.allocator = mem.arena_allocator(&ini_arena)
-    section_name := strings.to_lower(section_name_)
-    section_struct = section_struct_ptr^
-	section, ok := cfg.sections[section_name]
+/**
+*   parses a single section from cfg into section_struct. 
+*/
+parse_section_by_instance :: proc(cfg: Config, section_name: string, section_struct: ^$T) -> (err: Error) {
+    lower_case_section_name := strings.to_lower(section_name)
+    defer delete_string(lower_case_section_name)
+
+	section, ok := cfg.sections[lower_case_section_name]
 	if !ok {
-        fmt.eprintln("Could not find section '", section_name, "'.", cfg.sections)
+        //fmt.eprintln("Could not find section '", lower_case_section_name, "'.", cfg.sections)
         
-        return section_struct, .Section_Not_Found
+        return .Section_Not_Found
     }
 
 	field_names := r.struct_field_names(T)
     err = .Invalid_File_Format   
 	for field_name_ in field_names {
         field_name := strings.to_lower(field_name_)
+        defer delete_string(field_name)
 		data_value, ok := section.options[field_name]
 		if !ok {
             // We allow for fields to not exist in the ini file.
@@ -152,11 +138,9 @@ parse_section_by_instance :: proc(cfg: Config, section_name_: string, section_st
 			continue
 		}
 
-		field := r.struct_field_value_by_name(section_struct, field_name, true)
+		field := r.struct_field_value_by_name(section_struct^, field_name, true)
 
 		field_type := type_info_of(field.id)
-
-
 		if r.is_boolean(field_type) {
 			b, ok := str.parse_bool(data_value)
             if !ok {return}
@@ -190,12 +174,12 @@ parse_section_by_instance :: proc(cfg: Config, section_name_: string, section_st
 			continue
 		}
 
-		fmt.eprintln("Could not parse ", data_value, " to ", field_type, "for field", field_name)
-		return section_struct, .Invalid_Struct_Format 
+		//fmt.eprintln("Could not parse ", data_value, " to ", field_type, "for field", field_name)
+		return .Invalid_Struct_Format 
 
 	}
 
-    return section_struct, .OK
+    return .OK
 }
 
 /**
@@ -203,41 +187,11 @@ parse_section_by_instance :: proc(cfg: Config, section_name_: string, section_st
  * NOTE  Only integers, floats, booleans, strings, and runes are supported for fields of $T. Other types won't be assigned.
 */
 parse_section_by_type :: proc(cfg: Config, section_name: string, $T: typeid) -> (parsed: T, err: Error) {
-    
-    context.allocator = mem.arena_allocator(&ini_arena)
+ 
 	parsed = T{}
 	err = .Section_Not_Found
-	return parse_section_by_instance(cfg, section_name, &parsed)
+	err = parse_section_by_instance(cfg, section_name, &parsed)
+    return 
 
 }
 
-
-
-parse_section_by_parser :: proc(cfg: Config, parser: Parser($T)) -> (parsed: T, err: Error) {
-    context.allocator = mem.arena_allocator(&ini_arena)
-	parsed = T{}
-	err = .Section_Not_Found
-
-    section_name := strings.to_lower(parser.section_name)
-	section, ok := cfg.sections[section_name]
-	if !ok {
-		return
-	}
-
-	return parser.parse(section)
-
-}
-
-
-/* 
-tracker: mem.Tracking_Allocator
-mem.tracking_allocator_init(&tracker, context.allocator)
-defer mem.tracking_allocator_destroy(&tracker)
-context.allocator = mem.tracking_allocator(&tracker)
-defer if len(tracker.allocation_map) > 0 {
-    fmt.eprintln()
-    for _, v in tracker.allocation_map {
-        fmt.eprintf("%v - leaked %v bytes\n", v.location, v.size)
-    }
-} 
-*/

@@ -1,6 +1,8 @@
 package ini
 
 
+import str "core:strconv"
+
 /*
  *  assigns a bool value to a target of "any" type that originally is a boolean variable.
  *
@@ -31,6 +33,23 @@ assign_bool :: proc(target: ^any, value: bool) -> (ok: bool) {
 		return false
 	}
 	return true
+}
+
+
+/*
+ * extends strconv.parse_bool to also accept Yes/No, Y/N and variants
+ */
+parse_bool :: proc(data: string) -> (result:bool, ok:bool) {
+
+    switch data {
+        case "y", "Y", "yes", "Yes", "YES":
+            return true, true
+        case "n", "N", "no", "No", "NO":
+            return false, true
+        case:
+            return str.parse_bool(data)
+    }
+
 }
 
 
@@ -177,3 +196,5 @@ assign_integer :: proc(target: ^any, value: int) -> (ok: bool) {
 
 	return true
 }
+
+
